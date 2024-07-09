@@ -7,22 +7,7 @@ var oauth = require('../helpers/oauth.js');
 var xss = require("xss");
 
 const crypto = require('crypto');
-
-function getHostName() {
-  try {
-    var hostName = process.env.HOST || process.env.HOSTNAME;
-    if (!hostName) {
-      var OS = require('os');
-      hostName = OS.hostname();
-    }
-    logger.log('Hostname is ' + hostName);
-    return hostName;
-  }
-  catch (e) {
-    logger.log('Cannot retrieve host name! Aborting...')
-    throw (e);
-  }
-}
+var idcsAuthe = require('../helpers/idcsAuthenticate.js');
 
 // utility function:
 function redirectBrowser(req, res, url, payload) {
@@ -57,17 +42,7 @@ function redirectBrowser(req, res, url, payload) {
     res.write('sessionStorage.setItem("signinAT", "' + accessToken + '");\n');
     res.write('sessionStorage.setItem("baseUri", "' + process.env.IDCS_URL + '");\n');
 
-    if (process.env.IDCS_SELFREGPROFILES) {
-      res.write('sessionStorage.setItem("selfRegProfiles", "' + process.env.IDCS_SELFREGPROFILES + '");\n');
-    }
-    res.write('sessionStorage.setItem("clientId",\'' + process.env.IDCS_CLIENT_ID + '\');\n');
-
-    //Building the base URI of this server
-    //It may be used by the client-side to call back (for refreshing the access token, for instance).
-    // let serverSideBaseUri = process.env.PROTOCOL + '://' + getHostName() + ':' + process.env.PORT;
-    // logger.log('serverSideBaseUri: ' + serverSideBaseUri)
-    // res.write('sessionStorage.setItem("serverSideBaseUri", "' + serverSideBaseUri + '");\n');
-
+ 
     // Then add on everything from the payload.
     for (var field in payload) {
       var sanitizedField = xss(field);
@@ -118,8 +93,15 @@ router.post("/", function (req, res, next) {
   // From Oracle Identity Cloud Service 18.3.+, /social/callback sends us back here.
   // Social user is in Oracle Identity Cloud Service and no MFA
   if (req.body.authnToken) {
-    redirectBrowser(req, res, "../../signin.html", {
-      "IDPAuthnToken": req.body.authnToken
+    // redirectBrowser(req, res, "../../signin.html", {
+    //   "IDPAuthnToken": req.body.authnToken
+    // });
+    oauth.getAT().then(function (accessToken) {
+      let fields = {
+        "accessToken": accessToken,
+        "authnToken": req.body.authnToken
+      };
+      return res.send(idcsAuthe.createSelfSubmittingForm(process.env.IDCS_URL + "/sso/v1/sdk/session", fields));
     });
   }
 
@@ -162,9 +144,25 @@ router.post("/", function (req, res, next) {
       // loginContext["foo"] = "'";
       // logger.log('login Context: ' + JSON.stringify(loginContext).replace(/'/g, "\\'"));
 
-      redirectBrowser(req, res, "signin.html", {
-        "initialState": JSON.stringify(loginContext)
-      });
+      // redirectBrowser(req, res, "signin.html", {
+      //   "initialState": JSON.stringify(loginContext)
+      // });
+
+
+      if (loginContext.IDP.configuredIDPs.length == 1) {
+        var idp = loginContext.IDP.configuredIDPs[0];
+        let fields = {
+            'requestState': loginContext.requestState,
+            'idpName': idp.idpName,
+            'idpId': idp.idpId,
+            'clientId': process.env.IDCS_CLIENT_ID,
+            'idpType': idp.idpType
+        };
+        return res.send(idcsAuthe.createSelfSubmittingForm(process.env.IDCS_URL + "/sso/v1/sdk/idp", fields));
+      }else{
+        return res.send("you must setup only one social idp");
+      }
+
     }
   }
   else {
@@ -184,8 +182,15 @@ router.post('/ui/v1/error', function (req, res, next) {
 
   // Social user is in Oracle Identity Cloud Service and no MFA
   if (req.body.authnToken) {
-    redirectBrowser(req, res, "../../signin.html", {
-      "IDPAuthnToken": req.body.authnToken
+    // redirectBrowser(req, res, "../../signin.html", {
+    //   "IDPAuthnToken": req.body.authnToken
+    // });
+    oauth.getAT().then(function (accessToken) {
+      let fields = {
+        "accessToken": accessToken,
+        "authnToken": req.body.authnToken
+      };
+      return res.send(idcsAuthe.createSelfSubmittingForm(process.env.IDCS_URL + "/sso/v1/sdk/session", fields));
     });
   }
   // Social user needs to be registered in Oracle Identity Cloud Service, using SAME id as social provider's
@@ -206,84 +211,5 @@ router.post('/ui/v1/error', function (req, res, next) {
   }
 });
 
-
-// We end up here if either:
-// 1. Social IDP login fails and user cancels the process.
-// 2. If social login succeeds and and user is already provisioned in Oracle Identity Cloud Service but deactivated!
-
-router.get('/ui/v1/error', function (req, res, next) {
-  logger.log("GET for /ui/v1/error received.")
-  var encrypted = req.query.errorCtx;
-
-  logger.log("Decrypting loginCtx: " + encrypted);
-
-  var decrypted = idcsCrypto.decrypt(encrypted);
-
-  logger.log("errorCtx decrypted: " + decrypted);
-  var errCtx = JSON.parse(decrypted);
-  logger.log("First error:" + JSON.stringify(errCtx.errors[0]));
-
-  var errorType = 'login';
-
-  if (errCtx.errors[0].code === 'SSO-1003' || errCtx.errors[0].code === 'SSO-1002') {
-    logger.log("errorType is not social");
-    errorType = 'social';
-  }
-
-  logger.log("Redirecting browser with error context info.")
-  redirectBrowser(req, res, "../../signin.html", {
-    "isIDPUserInIDCS": "false",
-    "backendError": JSON.stringify({ type: errorType, code: errCtx.errors[0].code, msg: errCtx.errors[0].message })
-  });
-});
-
-
-router.get("/selfreg", function (req, res, next) {
-  // take loginCtx from the the POST data and decode it
-  logger.log("GET for selfreg received.")
-
-  if (req.query.token) {
-    logger.log("Token: " + req.query.token);
-    logger.log("Token post encoding: " + encodeURIComponent(req.query.token));
-
-    redirectBrowser(req, res, "signin.html", {
-      "operation": "register",
-      "token": encodeURIComponent(req.query.token)
-    });
-  }
-  else {
-    res.statusCode = 500;
-    res.end("Could not understand your request.");
-  }
-});
-
-router.get("/resetpwd", function (req, res, next) {
-  // take loginCtx from the the POST data and decode it
-  logger.log("GET for resetpwd received.");
-
-  if (req.query.token) {
-    redirectBrowser(req, res, "signin.html", {
-      "operation": "resetpwd",
-      "token": encodeURIComponent(req.query.token)
-    });
-  }
-  else {
-    res.statusCode = 500;
-    res.end("Could not understand your request.");
-  }
-});
-
-router.post("/newAccessToken", function (req, res) {
-  logger.log("------------------------------------------------");
-  logger.log("--- New access token request.");
-  oauth.authorize(req.get('Authorization')).then(oauth.getAT).then(function (accessToken) {
-    logger.log("--- Access token request fulfilled.");
-    res.status(200).send(accessToken);
-  })
-    .catch(function (error) {
-      logger.log("--- Access token request rejected: " + error);
-      res.status(401).send(error);
-    });
-});
 
 module.exports = router;
