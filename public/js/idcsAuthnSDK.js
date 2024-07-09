@@ -69,7 +69,17 @@ function IdcsAuthnSDK(app) {
           
             let jsonResponse = JSON.parse(this.responseText);
 
-
+            if (jsonResponse.status === 'success') {
+                self.app.setRequestState(jsonResponse.requestState)
+                if (jsonResponse.authnToken) { // User is successfully authenticated!
+                  self.app.logMsg('[IdcsAuthnSDK] Credentials successfully validated.');
+                  self.createSession(jsonResponse);
+                }
+                else {
+                  self.app.setLoginErrorMessage(self.sdkErrors.error9011);
+                }
+            }
+            else
             if (jsonResponse.status === 'failed') {
                 if (jsonResponse.cause) {
                   self.app.setLoginErrorMessage({ code: jsonResponse.cause[0].code, msg: jsonResponse.cause[0].message });

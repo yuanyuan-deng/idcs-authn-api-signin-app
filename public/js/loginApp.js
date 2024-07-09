@@ -144,6 +144,7 @@ function LoginApp() {
 
     formDiv.innerHTML =
       '<h3 data-res="social-socialRegisterUser-hdr">Social Registration</h3>' +
+      '<label><span data-res="social-userName-fld">UserName</span><input type="text" id="social-userName" readonly></label>' +
       '<label><span data-res="social-email-fld">Email</span><input type="text" id="social-email" readonly></label>' +
       '<label><span data-res="social-givenName-fld">First Name</span><input type="text" id="social-givenName"></label>' +
       '<label><span data-res="social-familyName-fld">Last Name</span><input type="text" id="social-familyName"></label>' +
@@ -153,7 +154,8 @@ function LoginApp() {
       '<button type="button" class="submit" id="social-cancel-btn" data-res="social-cancel-btn">Cancel</button>';
 
     // prepopulate using values from ID TOKEN...
-    formDiv.querySelector("#social-email").value = socialData.userData.userName;
+    formDiv.querySelector("#social-email").value = socialData.userData.email;
+    formDiv.querySelector("#social-userName").value = socialData.userData.userName;
     formDiv.querySelector("#social-givenName").value = socialData.userData.givenName;
     formDiv.querySelector("#social-familyName").value = socialData.userData.familyName;
 
